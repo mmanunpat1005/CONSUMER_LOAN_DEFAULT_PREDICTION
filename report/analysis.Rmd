@@ -1,0 +1,1304 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r, echo = FALSE, message = FALSE, warning=FALSE}
+source(here::here("script/setup.R"))
+```
+
+## **Data Preparation**
+
+> **Data cleaning**
+
+In this section, we list all possible errors that we found in the data set during the Data Understanding.
+
+-   EDUCATION: is a binary variable (0/1) but we notice from the description table that minimum value is -1 (observation number 37).
+-   GUARANTOR: is a binary variable (0/1) but we notice from the description table that maximum value is 2 (observation number 234).
+-   AGE: we spotted 125 years (the observation number 537).
+-   PRESENT_RESIDENT: is a categorical data and we spotted that it contains 0 to 3 in the pdf data description; however, it contains 1 to 4 in the actual data. <br /> <br /> Therefore, we believe that these numbers are errors on the data, so we modify them from the `german_credit table` as following:
+      -   EDUCATION at the observation number 37 is modified from -1 to 1
+      -   GUARANTOR at the observation number 234 is modified from 2 to 1
+      -   AGE at the observation 537 is modified from 125 to 75
+      -   PRESENT_RESIDENT values are modified from a range of 1 - 4 to 0 - 3
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+german_credit$EDUCATION[37] <- 1
+german_credit$GUARANTOR[234] <- 1
+german_credit$AGE[537] <- 75
+german_credit$PRESENT_RESIDENT[german_credit$PRESENT_RESIDENT == 1] <- 0
+german_credit$PRESENT_RESIDENT[german_credit$PRESENT_RESIDENT == 2] <- 1
+german_credit$PRESENT_RESIDENT[german_credit$PRESENT_RESIDENT == 3] <- 2
+german_credit$PRESENT_RESIDENT[german_credit$PRESENT_RESIDENT == 4] <- 3
+```
+
+
+Next, before starting applying the models to the data, first we convert the categorical variables from numeric(int) values to categorical (factor). For example, CHK_ACCT is actually a categorical data but the values in german_credit are numeric (int). On the following pie chart we can observe this transformation.
+
+```{r message=FALSE, include=FALSE}
+#convert categorical data to factor
+german_credit[,c(catevar)] <- lapply(german_credit[,c(catevar)], factor)
+
+#convert binary data to factor
+german_credit[,c(binaryvar)] <- lapply(german_credit[,c(binaryvar)], factor)
+
+#convert numeric data to integer
+german_credit$AGE <- as.integer(german_credit$AGE)
+
+str(german_credit)
+```
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+x<-inspect_types(german_credit[,-p])
+show_plot(x, col_palette=2)
+```
+
+For the `RESPONSE` variable, we transform the values to "Good" if it is equal to 1, and "Bad" otherwise. We allocated this new values in a column called `Applicant`. It is worth mentioning that we could have treated the data the way it was "0 & 1", and applied a regression task, but we preferred to visualize the categorical data with "Good" and "Bad" values.
+
+Finally, we proceed splitting the German Credit data into two datasets, to ensure that the models will not overfit the data and that the results of the predictions are good. To do so, we select for the first set; our **training set**, 80% of the observations randomly(*800 obs*), and for the observations that remain we took them as our **test set**(*200 obs*). Please note that we set a seed value for reproducibility purposes for the data partitioning.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+German_data <- german_credit %>% mutate(Applicant =ifelse(RESPONSE == 1, "Good", "Bad"))
+German_data <- German_data %>% select(-RESPONSE)
+German_data$Applicant <- as.factor(German_data$Applicant)
+
+set.seed(123) # for reproducibility
+index.tr <- createDataPartition(y = German_data$Applicant, p= 0.8, list = FALSE)
+df.tr <- German_data[index.tr,]
+df.te <- German_data[-index.tr,]
+```
+
+## **Modeling and Evaluation**
+
+Our goal is to obtain a model that may be used to determine if new applicants present a good or bad credit risk. Since we have transformed the column `RESPONSE` as a factor with categorical values, we will apply models that consider a classification task.
+
+We have chosen the models as follows:
+
+1.  Decision Trees
+2.  Random Forest
+3.  Neural Networks
+4.  Logistic Regression
+5.  Support Vector Machines (SVM)
+6.  K-Nearest Neighbors (KNN)
+7.  Linear Discriminant Analysis (LDA)
+8.  Quadratic Discriminant Analysis (QDA)
+9.  Naive Bayes classifier
+
+#### **Decision Trees - Classification**
+
+Decision trees are algorithms that recursively search the space for the best boundary possible, until we unable them to do so (Ivo Bernardo,2021). The basic functionality of decision trees is to split the data space into rectangles, by measuring each split. The main goal is to minimize the impurity of each split from the previous one.
+
+> **Build the model** - Unbalanced data without Cross validation
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Classification tree fit and plot
+german.tree <- rpart(Applicant ~ ., method= "class", 
+                     data=df.tr, cp= 0.001, model=TRUE)
+summary(german.tree)
+```
+
+After creating the model with `rpart` function, we proceed to plot it to visualize the result of this classification tree. In the graph we can observe that the main splitting variable is "CHK_ACCT = 0,1" the selected one, it reduces the impurity by **43.99**. In addition, we can determine which variables have the most significant reduction impact on the impurity function; in this case they will be those with the longest splitting length.
+
+-   The variables are:
+    -   HISTORY: Credit **History**
+    -   DURATION: **Duration** of the Credit
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+par(mar = c(0.5, 1, 0.5, 1))
+plot(german.tree, branch = 1)
+text(german.tree, digits = 1, use.n = TRUE, cex = 0.6, pretty=1)
+
+#rpart.plot(german.tree, cex = 0.5)
+```
+
+> **Pruning the Tree**
+
+We decided to prune the tree to reduce the statistical noise in the data, because as the tree splits over and over the length becomes shorter, therefore the importance of the split diminishes. Another reason is that since decision trees are susceptible to overfitting, reducing the size of the model will improve the accuracy.
+
+In the Complexity table below, we can visualize the 16 variables that were considered in the construction of the classification tree. Furthermore, the tree yielding the lowest-cross-validated rate `xerror` is tree number 3. We have chosen this tree by using the rule of thumb, which chooses the **lowest** level where the `rel_error + xstd < xerror`, and also by considering the simplest tree, so we discard the trees 4, 5, and 6 for this reason.
+
+```{r echo=FALSE, message=FALSE}
+printcp(german.tree)
+```
+
+Another way to find the lowest-cross-validated rate is by visualizing the size of the tree on a plot, in which you can observe the relative error `rel error` on the y axis, the cross-validation procedure `cp` on the x axis, and on the top side of the plot,the size of the tree (no. of terminal nodes). The black line is the cross-validated error rate `xerror` of each split.
+
+From the graph, we can visualize right away which cp to choose which is the one closest to the dotted line and the simplest one. For this case we could choose the tree with 7 nodes with a cp of 0.025
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+par(pty="s")
+plotcp(german.tree)
+```
+
+To visualize how the classification tree will look-like after the pruning, we plot it again. *Note: On the following tree we considered the cp of* **0.0166667** *, the no. 3 of the complexity table* .
+
+We can note from the graph that the classification tree has shortened, and the main splitting branch variable remains the same as expected, but the third node `OTHER_INSTALL` that was considered on the previous tree, has been removed, the same happened with the fourth node `SAV_ACCT` and the node `JOB`.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+set.seed(123)
+german.prune.tree <- prune(german.tree, cp=0.0166667)
+rpart.plot(german.prune.tree, cex = 0.7,
+           main = "Pruned Tree without CV and Unbalanced Data",
+           cex.main = 1, digits = 2, leaf.round = 9, shadow.col = "gray")
+```
+
+> **Model evaluation** - Unbalanced data without Cross validation
+
+```{r echo=FALSE, message=FALSE}
+table(df.tr$Applicant)
+```
+
+From the table we can observe an unbalanced data in the training set with 204 bad applicants and 560 good applicants, since there are many more "Good" applicants than "Bad" applicants, any model would favor the prediction of the "Good".
+
+First,we want to measure the accuracy of our model with the unbalance data, to know how good our model is, so we compute the confusion matrix to observe it's values.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+set.seed(123)
+german.pred.tree <- predict(german.prune.tree, newdata=df.te, type="class")
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix1 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#3F97D0')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='#F7AD50')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='#F7AD50')
+  rect(250, 305, 340, 365, col='#3F97D0')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c1<-confusionMatrix(german.pred.tree, df.te$Applicant)
+draw_confusion_matrix1(c1)
+```
+
+We note a **0.74** of accuracy, a balanced accuracy of **0.63**, and disproportion of the sensitivity (0.35) and specificity(0.91) which is not good. For that reason, we decided to balance our data so we can improve the balanced accuracy and make the overall score more robust by applying to the model a cross-validation technique. This will help our model to find the best set of hyperparameters and have better results.
+
+> **Class Balancing** - Re-sampling Data
+
+Balancing by re-sampling consists of increasing the number of cases in the smallest class (here "Bad") by re-sampling at random cases from this category to get the same amount as the largest category (here "Good"). It has the same aim as sub-sampling which is to have the same amount on each category(reducing the highest category).
+
+After applying the re-sampling we balance the data set to 560 applicants each.
+
+```{r echo=FALSE, message=FALSE}
+n.good <- max(table(df.tr$Applicant)) ## 560
+
+df.tr.good <- filter(df.tr, Applicant =="Good") ## the "Good" cases
+df.tr.bad <- filter(df.tr, Applicant =="Bad") ## the "Bad" cases
+
+## Re-sample 
+index.bad <- sample(size=n.good, x=1:nrow(df.tr.bad), replace=TRUE) 
+
+## Bind all the "Good" and the Re-sampled "Bad"
+df.tr.resamp <- data.frame(rbind(df.tr.good, df.tr.bad[index.bad,]))
+table(df.tr.resamp$Applicant) ## The cases are balanced
+```
+
+> **Model evaluation** - Balanced data with Cross validation and Tuning CP
+
+On the previous analysis we have seen how to build a decision tree model with the `rpart` function(by hand), also how to select manually the preferred CP from the complexity table, and how to identify it on a graph. Now, we will build a decision tree model with a Cross validation (CV) with the `caret`function (automatically), it will be applied to the balanced data that we created on the previous point. Finally, we will compare which balance accuracy is the highest.
+
+First, we split the **training data** into 10 non-overlapping subsets, 9/10 of this folds will be used to train the model, and 1/10 will be used as a validation set.
+
+Secondly, we built the model with the data that we have already split to the function trainControl of `caret`. In addition, we looked at the results across the tuning parameters and we found out that there were only 3 cp's selected with the best at **0.01785714**, which make us think about the possibility of a better one by looking on a larger grid of hyper parameters.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+german.cv.resamp <- caret::train(Applicant ~ .,
+                           data = df.tr.resamp,
+                           method ="rpart",
+                           preProcess = NULL,
+                           #cp = 0.001, #result isn't different
+                           model = T,
+                           trControl=trainControl(method="cv", number=10,
+                                                  verboseIter=FALSE))
+german.cv.resamp
+```
+
+We built again the model but this time we considered tuning grid going from 0 to 0.03 with a sequence of 0.001, in order to find a better hyper parameter than the ones seen already.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Building a Classification tree model: Considering a Cross-Validation with a Class balancing of Re-sampling and a Tuning grid
+
+set.seed(123)
+trGrid <- expand.grid(cp = seq(0, 0.03, 0.001)) #search more cps to find the best model
+german.cv.resamp <- caret::train(Applicant ~ .,
+                           data = df.tr.resamp,
+                           method ="rpart",
+                           preProcess = NULL,
+                           #cp = 0.001, #result isn't different
+                           model = T,
+                           trControl=trainControl(method="cv", number=10,
+                                                  verboseIter=FALSE),
+                           tuneGrid = trGrid)
+german.cv.resamp
+```
+
+From the results of the table, the model with the **cp = 0.005** deliver the highest accuracy of 77.9%, which is higher than the accuracy from the previous model that has cp = **0.01785714**.
+
+Finally, we apply the model to the test set to visualize the outcome on the confusion matrix table.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Apply the trained model to the test set
+german.pred.resamp.tree.cv <- predict(german.cv.resamp, newdata=df.te)
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix2 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix - Classification Tree', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#3F97D0')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='brown2')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='brown2')
+  rect(250, 305, 340, 365, col='#3F97D0')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c2 <-confusionMatrix(german.pred.resamp.tree.cv, df.te$Applicant)
+draw_confusion_matrix2(c2)
+```
+
+As expected, the accuracy has decreased from **0.74** to **0.68** but the balanced accuracy has increased from **0.63** to **0.66**. We can also observe that sensitivity and specificity are now more balanced. The sensitivity is significantly improved from **0.35** to **0.60**, while the specificity decreases from **0.91** to **0.71**.
+
+Overall, we determine that the model computed with the `caret`function using a tuning grid was the one performing better on new data (*test set*) for the Classification Tree. Moreover, as we wanted to visualize the best result of the classification tree, we plot it into a graph.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+rpart.plot(german.cv.resamp$finalModel, cex = 0.7,
+           main = "Final Tree from CV and Balanced Data (Re-sampling)",
+           cex.main = 1, digits = 2, leaf.round = 9, shadow.col = "gray",
+           nn= T)
+```
+
+#### **Random Forest**
+
+Random Forest (RF) are algorithms of a set of decision trees that will produce a final prediction with the average outcome of the set of trees considered (*user can define the amount of trees and the number of variables for each node*). One of the reasons that we decided to test this method is because RF are considered to be more stable than Decision Trees; more trees better performance, but certain advantages come at a price. RF slow down the computation speed and cannot be visualize, however, we will look at the results for later comparison (Saikumar Talari, 2022).
+
+> **Model evaluation** - Balanced data with Cross validation and Tuning Parameter
+
+For this method we will consider the same approach as the last one of Classification Tree, but we will use another class balancing called Sub-sampling. Balancing by sub-sampling consists of decreasing the number of cases in the highest class (here "Good") by sub-sampling at random cases from this category to get the same amount as the smallest category (here "Bad"). It has the same aim as re-sampling which is to have the same amount on each category(*increasing the lowest category*). Finally, we will also take into account a Cross-Validation technique.
+
+We also tune the 'mtry' hyper parameter, which indicates the number of variables randomly sampled as candidates at each split, using the tuneLenght parameter.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Build the model 
+set.seed(123)
+german.rf <- caret::train(Applicant ~ .,
+                         data=df.tr,
+                         method="rf",
+                         preProcess=NULL, 
+                         trControl=trainControl(method="cv", 
+                                                number=10,
+                                                verboseIter=FALSE,
+                                                sampling = "down"),
+                         tuneLength = 15)
+
+
+# Apply Model to the test dataset
+german.rf.pred <- predict(german.rf, newdata=df.te)
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix3 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix - Random Forest', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#CCFF00')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='burlywood4')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='burlywood4')
+  rect(250, 305, 340, 365, col='#CCFF00')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c3 <-confusionMatrix(german.rf.pred, df.te$Applicant)
+draw_confusion_matrix3(c3)
+```
+
+The optimal model is selected using the largest value of Accuracy. The hyper parameter of the optimal model is mtry = 11.
+
+According from the results of the Confusion matrix, we note that there are changes between the classification tree model and the random forest model in terms of the accuracy and the balanced accuracy, which decrease from **0.68** to **0.66** and from **0.657** to **0.644** respectively. However, there is a higher difference between the sensitivity and the specificity, which means that the precision of the model is lower determining if an Applicant is Good or Bad. In addition, the Cohen's Kappa has a strength of agreement of **0.292** (fair agreement), which means that the observed accuracy is only slightly higher than the accuracy that one would expect from a random model. Overall, the results of Random Forest are lower than the Classification Tree.
+
+#### **Neural Networks**
+
+Neural Networks(NN) are a set of algorithms, modeled loosely after the human brain, that are designed to recognize patterns. They are constructed by nodes, which represent the neurons, connected by arcs that interpret sensory data through a kind of machine perception, labeling or clustering raw input (Chris Nicholson, 2020). Since NN are applicable to classification problems, we decided to consider it for our analysis.
+
+> **Model evaluation** - Balanced data with Cross validation and Tuning Parameters
+
+For this method we will consider the same approach as the past models, so we could compare the results and define which model is the one performing better at predicting the classes "Good" and "Bad". To balance the data, we will apply ones again the sub-sampling method, and we will also take into account a Cross-Validation technique.
+
+First, we build the model with the `caret` package with the previous mentioned considerations, to determine the best model for NN. In addition, we selected a grid from 1 to 10 for the number of nodes in a hidden layers with a sequence of 1 (Note: nnet fit a single hidden layer neural network), and another one for the decay from 0.1 to 0.5 with a sequence of 0.1. The metric that was selected was the Accuracy.
+
+```{r message=FALSE, include=FALSE}
+library(caret)
+# Build the model
+set.seed(123)
+german.nnet <- caret::train(Applicant ~.,
+                         data=df.tr,
+                         method="nnet",
+                         metric = "Accuracy",
+                         tuneGrid = expand.grid(
+                           size = seq(from = 1, to = 10, by = 1),
+                           decay = seq(from = 0.1, to = 0.5, by = 0.1)),
+                         trControl=trainControl(method="cv", 
+                                                number=10,
+                                                verboseIter=FALSE,
+                                                sampling = "down"))
+```
+
+After the model was built, we wanted to visualize which hyper parameters were chosen for building the best model, so we plot them into a chart.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+plot(german.nnet, rep="best")
+```
+
+According to the chart, we note that the highest Accuracy can be reach considering only 1 node in a hidden layer with 0.3 of weight decay (*Is the regularization parameter to avoid over-fitting*).
+
+For visualization purposes, we plot the Neural Network. The positive connections weights are shown in color green, while the negative connections are in blue.
+
+```{r echo=FALSE, message=FALSE, fig.height=8, fig.width=12, warning=FALSE}
+library(NeuralNetTools)
+par(mar=numeric(4), family="serif") # manage the plot window
+plotnet(german.nnet, pos_col="darkgreen", neg_col="darkblue",
+        bord_col = "lightblue", circle_col = "lightblue", 
+        circle_cex = 4, cex_val= .8,  
+        alpha.val=0.7) # positive = pos_col, negative = neg_col
+```
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Apply Model to the test dataset
+german.nnet.pred <- predict(german.nnet, newdata = df.te, type="raw")
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix4 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix - Neural Networks', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#339933')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='#CCCCCC')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='#CCCCCC')
+  rect(250, 305, 340, 365, col='#339933')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c4 <-confusionMatrix(german.nnet.pred, df.te$Applicant)
+draw_confusion_matrix4(c4)
+
+```
+
+Comparing the results of the confusion matrix with the Classification Tree model (the best one so far), we note a lower Accuracy on NN model by **0.025**, and the Cohen's Kappa diminished by **0.025**. Moreover, the Balanced Accuracy also gave a lower result with **0.008** below the Classification Tree result, and also with a lower Precision (0.447). From this results, we will still prefer the Classification Tree over NN.
+
+#### **Logistic Regression**
+
+The logistic regression is a regression adapted to binary classification. The basic idea of logistic regression is to use the mechanism already developed for linear regression by modeling the probability pi using a linear predictor function, i.e. a linear combination of the explanatory variables and a set of regression coefficients that are specific to the model at hand but the same for all trials. The linear combination is transformed to a probability using a sigmoid function.
+
+> **Model evaluation** - Balanced data with Cross validation
+
+Similar to the previous models, we would like to balance the response data (Good and Bad) by applying a sub-sampling method. A Cross-Validation technique with 10- fold is also performed in the train set to alleviate the over-fitting issue.
+
+In the model development, the `caret` package is still in use with `glm` method. We should pass an additional argument of "binomial" to the "family" parameter for glm method because the method refers to the generalized linear model which includes many models such as linear regression, ANOVA, poisson regression, logistic regression, etc. However, we do not need to specify the family in actuality since caret automatically detects that we are trying to perform classification, and would automatically use family = "binomial" as a default parameter. Additionally, the `twoClassSummary` and the classProbs = "TRUE" are required to compute measures specific to two-class problems, such as the area under the ROC curve, the sensitivity and specificity.
+
+We do not set the threshold for this model so the threshold of 50% will be applied.
+
+```{r message=FALSE, include=FALSE, warning=FALSE}
+# Build the model
+set.seed(123)
+german.glm <- caret::train(Applicant ~.,
+                         data=df.tr,
+                         method="glm",
+                         trControl=trainControl(method = "cv",
+                                                number = 10,
+                                          summaryFunction = twoClassSummary,
+                                          classProbs =TRUE, savePredictions = T,
+                                          sampling = "down"))
+
+```
+
+We then plot the receiver operating characteristic curve (ROC) to find the optimal threshold. The optimal threshold can be visualize at **0.531** on the ROC curve accompanied with the values of the specificity and sensitivity. Thus, our default threshold (50%) is appropriate.
+
+```{r message=FALSE, include=FALSE, warning=FALSE}
+# Selecting threshold 
+ROC <- roc(german.glm$pred$obs, german.glm$pred$Good, direction = c("<"),
+           levels = c("Bad", "Good"))
+```
+
+```{r message=FALSE, warning=FALSE, fig.align='center'}
+
+plot(ROC, print.thres="best")
+```
+
+After that, we apply the trained model to the test set. From the confusion matrix, we see that the accuracy, Kappa, balanced accuracy, sensitivity and specificity are **0.64**, **0.25**, **0.643**, **0.65** and **0.636**, respectively. Comparing to the results of the classification tree model (the best one so far), only the sensitivity of logistic regression is higher by 0.05. We then conclude that the classification tree model still performs best.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Apply Model to the test dataset
+german.glm.pred <- predict(german.glm, newdata = df.te)
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix5 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix - Logistic Regression', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#CCFF99')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='#FF9999')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='#FF9999')
+  rect(250, 305, 340, 365, col='#CCFF99')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c5 <-confusionMatrix(german.glm.pred, df.te$Applicant)
+draw_confusion_matrix5(c5)
+
+```
+
+#### **Support Vector Machines (SVM) - Classification**
+
+Support Vector Machines is another simple algorithm in machine learning aiming to find a hyperplane in an N-dimensional space(N is the number of features) that distinctly classifies the observations. The selected plane has the maximum margin. In other words, to separate the two classes of the data points, the selected plane has the maximum distance between data points of both classes. Maximizing the margin distance provides some reinforcement so that future data points can be classified with more confidence. We can apply SVM to solve both linear and non-linear problems.
+
+> **Model evaluation** - Balanced data with Cross validation and Tuning Cost
+
+Due to the number of features (30 variables), it is difficult to apply a scatter plot and justify whether this problem is linear or non-linear. Therefore, we perform both linear SVM and non-linear SVM, giving a radial SVM as an example.
+
+> **Linear SVM**
+
+Starting with linear SVM, we still apply the `caret` package to build the model. For the method, we select the `svmLinear`. In order to reduce the effect of the over-fitting issue and to improve the robustness of the model, we still take into account a Cross-Validation technique with 10-fold and a sub-sampling method. Moreover, we build a search grid and fit the model with each possible value in the grid to select a good hyperparameter, which is "cost" in this case. Setting the cost is a way to control the tolerance to bad classification. For example, if the cost is equal zero, there is no penalty on the distance to the margin, so that all the points can be misclassified and the border is very smooth. On the other hand, if the cost is very large, few misclassifications are allowed and overfitting is possible. Then, the border is not smooth.
+
+We set the cost in the grid to be 0.01, 0.1, 1, 10, 100 and 1,000.
+
+```{r message=FALSE, include=FALSE, warning=FALSE}
+# Build the model
+set.seed(123)
+grid.svm <- expand.grid(C = c(0.01, 0.1, 1, 10, 100, 1000))
+german.svm <- caret::train(Applicant ~.,
+                         data=df.tr,
+                         method="svmLinear",
+                         trControl=trainControl(method = "cv",
+                                                number = 10,
+                                                sampling = "down"),
+                         tuneGrid = grid.svm)
+
+```
+
+From the plot and the below results, the accuracy (0.72125) apparently reaches a plateau(peak) at the C = 100.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+plot(german.svm)
+german.svm$bestTune
+german.svm
+```
+
+Then, we apply the model to the test set. Regarding the confusion matrix, the accuracy, kappa, balanced accuracy, sensitivity and specificity are **0.635**, **0.217**, **0.62**, **0.583** and **0.657** respectively. The classification tree is still the best one so far.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Apply Model to the test dataset
+german.svm.pred <- predict(german.svm, newdata = df.te)
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix6 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix - Linear SVM', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#3366FF')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='#CCCCCC')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='#CCCCCC')
+  rect(250, 305, 340, 365, col='#3366FF')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c6 <-confusionMatrix(german.svm.pred, df.te$Applicant)
+draw_confusion_matrix6(c6)
+
+```
+
+> **Radial SVM**
+
+We repeat the procedure for SVM with a radial basis kernel. Here, there are two parameters (sigma and cost (C)) to tune. The grid choice is rather arbitrary (often the result of trials and errors). We set the cost same as the linear SVM and sigma to be 0.01, 0.02, 0.05, and 0.1.
+
+```{r message=FALSE, include=FALSE, warning=FALSE}
+# Build the model
+set.seed(123)
+grid.svm_radial <- expand.grid(sigma = c(0.01, 0.02, 0.05, 0.1), 
+                               C = c(0.01, 0.1, 1, 10, 100, 1000))
+
+german.svm_radial <- caret::train(Applicant ~.,
+                         data=df.tr,
+                         method="svmRadial",
+                         trControl=trainControl(method = "cv",
+                                                number = 10,
+                                                sampling = "down"),
+                         tuneGrid = grid.svm_radial)
+
+```
+
+We can see from the plot and the results of the model, the optimal model from this search is with sigma = 0.01 and C=1. The accuracy is 0.71875.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+plot(german.svm_radial)
+german.svm_radial$bestTune
+german.svm_radial
+```
+
+Similarly, the radial SVM model is used in the test set to measure the performance. As for the confusion matrix, the accuracy, Kappa, balanced accuracy, sensitivity and specificity are **0.655**, **0.253**, **0.639**, **0.6** and **0.679** respectively. Comparing between both SVM models, we observe that radial SVM performs better than linear SVM in every measurement. However, the classification tree model performs best.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Apply Model to the test dataset
+german.svm_radial.pred <- predict(german.svm_radial, newdata = df.te)
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix7 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix - Radial SVM', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#00CC00')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='#CCCCCC')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='#CCCCCC')
+  rect(250, 305, 340, 365, col='#00CC00')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c7 <-confusionMatrix(german.svm_radial.pred, df.te$Applicant)
+draw_confusion_matrix7(c7)
+
+```
+
+#### **K-Nearest Neighbors (KNN)**
+
+The KNN algorithm is one of simple machine learning techniques based on the assumption that similar things exist in close proximity. In other words, similar things are near to each other. The KNN captures the idea of similarity (sometimes called distance, proximity, or closeness) by calculating the distance between data points. There are several ways of calculating distance, such as Manhattan distance, Hamming distance, Euclidean Distance, and Gower index.
+
+> **Model evaluation** - Balanced data with Cross validation and Tuning parameter
+
+We use the `knn` method in the `caret` package to build the model and use a sub-sampling method as well as perform 10-fold cross validation through the trControl parameter. In addition, we also standardize features by assigning 'center' and 'scale' to the 'preProcess' parameter.
+
+Moreover, we set the 'tuneLength' parameter to 20 in order to let the algorithm to randomly try 20 different sets of hyperparameter.
+
+```{r echo = FALSE, message=FALSE, include=FALSE, warning=FALSE}
+# Build the model
+set.seed(123)
+# scale data
+preProcValues <- preProcess(x = df.tr,method = c("center", "scale"))
+german.knn <- caret::train(Applicant ~ ., 
+                data = df.tr,
+                method = "knn",
+                preProcess = c("center","scale"), 
+                tuneLength = 20,
+                trControl = trainControl(method="cv", 
+                                         number= 10,
+                                         sampling="down"))
+
+```
+
+From the results below, the model select the hyperparameter k = 9 since it deliver the highest accuracy (0.66).
+
+```{r echo=FALSE, message=FALSE, fig.align='center', warning=FALSE}
+german.knn
+plot(german.knn)
+```
+
+Then, we apply the model to the test set. From the confusion matrix below, we find that the accuracy, Kappa, balanced accuracy, sensitivity and specificity are **0.62**, **0.221**, **0.629**, **0.65** and **0.607** respectively. We find that all the metrics in this model, except specificity, are lower than the results from the classification tree model.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Apply Model to the test dataset
+german.knn.pred <- predict(german.knn, newdata = df.te)
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix8 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix - K-Nearest Neighbors (KNN)', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#FB9A85')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='#D5D5D5')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='#D5D5D5')
+  rect(250, 305, 340, 365, col='#FB9A85')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c8 <-confusionMatrix(german.knn.pred, df.te$Applicant)
+draw_confusion_matrix8(c8)
+
+```
+
+#### **Linear Discriminant Analysis (LDA)**
+
+LDA (Linear Discriminant Analysis) is a classifier used when a linear boundary is required and generated by fitting class conditional densities to the data and using Bayes’ rule. LDA assume that all response classes share the same covariance, and distributions of each response class is normal with a class-specific mean and common variance.
+
+> **Model evaluation** - Balanced data with Cross validation 
+
+We use the `lda` method in the `caret` package to build the model and use a sub-sampling method to avoid a bias in unbalance data. In addition, we set a "cv" method with "10" number under the trControl command referring to a Cross-Validation technique with 10-fold.
+
+We also standardize features by setting assign 'center' and 'scale' to the preProcess parameter.
+
+Please note that there is no tunning parameter for the `lda` method, so we do not assign any values to th tuneLength or the tuneGrid parameters.
+
+```{r echo=FALSE, message=FALSE, include=FALSE, warning=FALSE}
+# Build the model
+set.seed(123)
+preproc <- c("center", "scale")
+
+german.lda <- caret::train(Applicant ~.,
+                         data=df.tr,
+                         method="lda",
+                         trControl=trainControl(method = "cv",
+                                                number = 10,
+                                                sampling = "down"),
+                         preProcess = preproc)
+
+```
+
+
+```{r echo=FALSE, message=FALSE, fig.align='center', warning=FALSE}
+german.lda
+```
+
+Afterward, we apply the trained model to the test set. From the confusion matrix, we see that the accuracy, Kappa, balanced accuracy, sensitivity and specificity are **0.65**, **0.257**, **0.646**, **0.65** and **0.643**, respectively. All metrics, except sensitivity, of LDA are lower than those of the classification tree model (the best one so far). Thus, the classification tree model still performs best.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Apply Model to the test dataset
+german.lda.pred <- predict(german.lda, newdata = df.te)
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix9 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix - Linear Discriminant Analysis (LDA)', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#8A5D86')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='#D5D5D5')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='#D5D5D5')
+  rect(250, 305, 340, 365, col='#8A5D86')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c9 <-confusionMatrix(german.lda.pred, df.te$Applicant)
+draw_confusion_matrix9(c9)
+
+```
+
+#### **Quadratic Discriminant Analysis (QDA)**
+
+In contrast to LDA, QDA (Quadratic Discriminant Analysis) is less strict for the covariance assumption and allow different covariance for different classes, which result in a quadratic boundary.
+
+> **Model evaluation** - Balanced data with Cross validation 
+
+We use the `qda` method in the `caret` package to build the model and use a sub-sampling method to avoid a bias in unbalance data. In addition, we set a "cv" method with "10" number under the trControl command referring to a Cross-Validation technique with 10-fold.
+
+We also standardize features by setting assign 'center' and 'scale' to the preProcess parameter.
+
+Please note that there is no tunning parameter for the `qda` method, so we do not assign any values to th tuneLength or the tuneGrid parameters.
+
+```{r echo=FALSE, message=FALSE, include=FALSE, warning=FALSE}
+# Build the model
+set.seed(123)
+preproc <- c("center", "scale")
+
+german.qda <- caret::train(Applicant ~.,
+                         data=df.tr,
+                         method="qda",
+                         trControl=trainControl(method = "cv",
+                                                number = 10,
+                                                sampling = "down"),
+                         preProcess = preproc)
+
+```
+
+
+```{r echo=FALSE, message=FALSE, fig.align='center', warning=FALSE}
+german.qda
+```
+
+Afterward, we apply the trained model to the test set. From the confusion matrix, we see that the accuracy, Kappa, balanced accuracy, sensitivity and specificity are **0.685**, **0.33**, **0.685**, **0.683** and **0.686**, respectively. Comparing to the classification tree model (the best model so far), QDA outperforms in all metrics, expect specificity. Thus, we will select QDA as the best model.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Apply Model to the test dataset
+german.qda.pred <- predict(german.qda, newdata = df.te)
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix10 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix - Quadratic Discriminant Analysis (QDA)', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#DC3440')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='#D5D5D5')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='#D5D5D5')
+  rect(250, 305, 340, 365, col='#DC3440')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c10 <-confusionMatrix(german.qda.pred, df.te$Applicant)
+draw_confusion_matrix10(c10)
+
+```
+
+#### **Naive Bayes classifier**
+
+A Naive Bayes classifier is under a simple probabilistic classifier family, which is a machine learning model that is used to discriminate different objects based on certain features. The crux of the Naive Bayes classifier is based on the Bayes theorem and it is generally used for classification tasks. There are many types of this classifier such as Multinomial Naive Bayes, Bernoulli Naive Bayes, and Gaussian Naive Bayes.
+
+> **Model evaluation** - Balanced data with Cross validation and Tuning Parameters
+
+The `caret` package is still the main package we apply in building the model. To build the Naive Bayes classifier, the `naive_bayes` method is used. As for a good practice to avoid a bias in unbalance data, a sub-sampling method is set with the trControl command. Moreover, we also set a "cv" method with "10" number under the trControl command referring to a Cross-Validation technique with 10-fold.
+
+In addition, a search grid is built to find good parameters for our trained model. In the `naive_bayes` method , we can tune 3 parameters which are the following:
+
+-   Kernel distribution: we set it as True or False arguments. Note that the default argument is the Gaussian distribution.
+-   Laplace: Laplace correction is a smoothing technique to solve the problem of zero probability of unseen events. We assign values of 0.0, 0.5 and 1.0. The value of zero indicates no Laplace correction.
+-   Adjust: This parameter allows the bandwidth adjustment of the density. We assign values of 0.75, 1.00, 1.25 and 1.50.
+
+```{r message=FALSE, include=FALSE, warning=FALSE}
+# Build the model
+set.seed(123)
+nb_grid <- expand.grid(usekernel = c(TRUE, FALSE),
+                         laplace = c(0, 0.5, 1), 
+                         adjust = c(0.75, 1, 1.25, 1.5))
+
+german.naivebayes <- caret::train(Applicant ~.,
+                         data=df.tr,
+                         method="naive_bayes",
+                         trControl=trainControl(method = "cv",
+                                                number = 10,
+                                                sampling = "down"),
+                         tuneGrid = nb_grid)
+
+```
+
+From the results below, we can observe that the Accuracy from gausian distribution ('False', left-hand sided chart) is better than the accuracy from kernel distribution ('True', right-hand sided chart). The accuracy between the models with the gausian distribution is relatively close to each other, and the model whose accuracy is the highest is the model with the gausian distribution, laplace correction = 1 and bandwidth adjustment = 0.75.
+
+```{r echo=FALSE, message=FALSE, fig.align='center', warning=FALSE}
+german.naivebayes
+german.naivebayes$finalModel$tuneValue
+plot(german.naivebayes)
+```
+
+We then apply the trained model to the test set. From the confusion matrix, we see that the accuracy, Kappa, balanced accuracy, sensitivity and specificity are **0.62**, **0.215**, **0.624**, **0.633** and **0.614**, respectively. Comparing to the results of the Quadratic Discriminant Analysis (QDA), the best one so far, every metric of the Navie Bayes classifier is lower. We conclude that the Quadratic Discriminant Analysis (QDA) remains the best one.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+# Apply Model to the test dataset
+german.nb.pred <- predict(german.naivebayes, newdata = df.te)
+
+# Measure the accuracy of the prediction
+draw_confusion_matrix11 <- function(cm) {
+  
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('Confusion Matrix - Naive Bayes classifier', cex.main=2)
+  
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#FB9A85')
+  text(195, 440, 'Bad', cex=1.2, font=14)
+  rect(250, 430, 340, 370, col='#D5D5D5')
+  text(295, 440, 'Good', cex=1.2, font=14)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=15)
+  text(245, 450, 'Actual', cex=1.3, font=15)
+  rect(150, 305, 240, 365, col='#D5D5D5')
+  rect(250, 305, 340, 365, col='#FB9A85')
+  text(140, 400, 'Bad', cex=1.2, srt=90, font=14)
+  text(140, 335, 'Good', cex=1.2, srt=90, font=14)
+  
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+  
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS",
+       xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=15)
+  text(10, 65, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=15)
+  text(30, 65, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=15)
+  text(50, 65, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=15)
+  text(70, 65, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=15)
+  text(90, 65, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+  
+  # add in the accuracy information 
+  text(20, 35, names(cm$overall[1]), cex=1.5, font=15)
+  text(20, 15, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(50, 35, names(cm$overall[2]), cex=1.5, font=15)
+  text(50, 15, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+  text(80, 35, names(cm$byClass[11]), cex=1.5, font=15)
+  text(80, 15, round(as.numeric(cm$byClass[11]), 3), cex=1.4)
+}
+c11 <-confusionMatrix(german.nb.pred, df.te$Applicant)
+draw_confusion_matrix11(c11)
+
+```
+
+#### **Model performance summary**
+
+In this section, we create a table containing sensitivity, specificity, accuracy, balanced accuracy, and Cohen's kappa of every model. To do this, we can see and compare performance of each model easier and clearer. 
+
+From the model performance summary table, we observe that the decision tree model outperform the other models in terms of specificity, accuracy, balanced accuracy and Cohen's kappa. However, some models, such as logistic regression, neural network, and navie bayes classifier, return better result in the sensitivity. Therefore, we can say that the decision tree model is more suitable than the rest in this research.
+
+```{r echo=FALSE, message=FALSE}
+final_table <- data.frame(cbind(Sensitivity=c(c2$byClass[1],
+                                              c3$byClass[1],
+                                              c4$byClass[1],
+                                              c5$byClass[1],
+                                              c6$byClass[1],
+                                              c7$byClass[1],
+                                              c8$byClass[1],
+                                              c9$byClass[1],
+                                              c10$byClass[1],
+                                              c11$byClass[1]),
+                                Specifity=c(c2$byClass[2],
+                                            c3$byClass[2],
+                                            c4$byClass[2],
+                                            c5$byClass[2],
+                                            c6$byClass[2],
+                                            c7$byClass[2],
+                                            c8$byClass[2],
+                                            c9$byClass[2],
+                                            c10$byClass[2],
+                                            c11$byClass[2]),
+                                Accuracy=c(c2$overall[1],
+                                           c3$overall[1],
+                                           c4$overall[1],
+                                           c5$overall[1],
+                                           c6$overall[1],
+                                           c7$overall[1],
+                                           c8$overall[1],
+                                           c9$overall[1],
+                                           c10$overall[1],
+                                           c11$overall[1]),
+                                Balanced_accuracy=c(c2$byClass[11],
+                                                    c3$byClass[11],
+                                                    c4$byClass[11],
+                                                    c5$byClass[11],
+                                                    c6$byClass[11],
+                                                    c7$byClass[11],
+                                                    c8$byClass[11],
+                                                    c9$byClass[11],
+                                                    c10$byClass[11],
+                                                    c11$byClass[11]),
+                                Kappa=c(c2$overall[2],
+                                        c3$overall[2],
+                                        c4$overall[2],
+                                        c5$overall[2],
+                                        c6$overall[2],
+                                        c7$overall[2],
+                                        c8$overall[2],
+                                        c9$overall[2],
+                                        c10$overall[2],
+                                        c11$overall[2])))
+
+row.names(final_table) <- c("Decison Tree","Random Forest","Neural Networks", "Logistic Regression", "Linear SVM", "Radial SVM", "K-Nearest Neighbors", "Linear Discriminant Analysis", "Quadratic Discriminant Analysis", "Naive Bayes classifier")
+
+kable(final_table, caption = "Model performance summary with balanced data") %>%
+  kable_styling(bootstrap_options = "bordered") 
+```
+
+#### **Variable Importance**
+
+After the model evaluation, it would be very useful in a business context to see which variables are significant in the selected model.
+
+Variable importance is a method that provides a measure of the importance of each feature for the model prediction quality. We analyze the variables importance of our best model which is the Quadratic Discriminant Analysis (QDA).
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+x_train1 <- select(df.tr, -Applicant) 
+y_train1 <- pull(df.tr, Applicant) 
+y_train1 <- as.numeric(y_train1)
+
+explainer_tree <- DALEX::explain(model = german.qda, 
+                                 data = x_train1, 
+                                 y = y_train1,
+                                 label = "QDA")
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+calculate_importance <- function(your_model_explainer, n_permutations = 10) {
+  imp <- model_parts(explainer = your_model_explainer,
+                     B = n_permutations, # no. of times to shuffle each column
+                     type = "variable_importance", # 
+                     N = NULL) # no. of samples to calculate the VarImp                                            NULL selects the entire training set
+  return(imp)
+}
+
+
+importance_tree  <- calculate_importance(explainer_tree)
+importance_tree[order(importance_tree[,"dropout_loss"]), ]
+importance_tree <- importance_tree
+
+```
+
+```{r echo=FALSE, message=FALSE, fig.height=6, fig.width=12, fig.align='center'}
+# Plot the variable importance for the models
+
+plot(importance_tree) 
+```
+
+We use the AUC loss to compare the model quality of shuffling different variables. AUC is a synthetic measure of the distance to random model in the ROC curve plot. The larger AUC, the better the model.
+
+According to the feature importance of the QDA model, the top 5 most important variables are HISTORY (Credit History), OWN_RES (Applicant owns residence or not), USED_CAR (Purpose of Credit), CHK_ACCT (Balance in checking account) and SAV_ACCT (Balance in savings account). It is important to mention that if we remove these variables, the AUC of the model will have the largest loss.
+
+There are some limitations of the variable importance method that we should also take into consideration. For example, variable importance cannot see the interaction relationships between features. The combination (interaction) of several features might be a good predictor. Furthermore, the variable importance measure is dependent on the data set, so it might be subject to over-fitting.
+

@@ -1,0 +1,279 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r, echo = FALSE, message = FALSE, warning=FALSE}
+source(here::here("script/setup.R"))
+```
+
+In this project, we followed the CRISP-DM model to solve this problem. So we divided our analysis on regards to the following sections:
+
+* **Business Understanding**
+* **Data Understanding**
+* **Data Preparation**
+* **Modeling**
+* **Evaluation**
+* **Deployment**
+
+## **Business Understanding**
+
+Our motivation for this project is to apply data analytics in a business context to increase efficiency of the business. In the retail lending business, banks receives loan applications from individuals with different profiles and make decision whether to approve or not. When banks reject applications from good credit applicants who are likely to repay the loan, banks will lose their business opportunities. On the other hands, if banks accept applications from bad credit applicants who are likely to default, banks will incur financial losses. Thus, in this project, we will leverage data from the German credit data set to develop a model that is able to help banks determine credit quality of their loan applications.
+
+Additionally, we can help banks increase the efficiency of the loan approval process by the ability to analyze loan applications in real-time and provide the loan approval decision instantly.
+
+**Business Objective:** The goal of this analysis is to obtain a model that is able to determine if new applicants present a good or bad credit risk based on personal and credit profiles.
+
+**Situation:** We obtain the German Credit data, which has data on 1000 past credit applicants, described by 30 variables such as account status, credit history, duration of credit and purpose of credit. Each applicant is rated as "Good" or "Bad" credit (encoded as 1 and 0 respectively in the response variable). 
+
+**Data mining goals:** The aim of this project in the data mining terms is using credit application information, including personal information, credit history and type of credit, to generate a model that classify or rate applicants to the "Good" or "Bad" groups. Banks will be able to predict if an applicant will be "Good" or "Bad" based on the application information.
+
+
+## **Data Understanding**
+
+We will take a closer look at the German Credit data to avoid any data related issues that might happen in the next steps, Data Preparation and Modeling.
+
+```{r, echo=FALSE, message=FALSE}
+german_credit <- read.csv2(here::here("data/GermanCredit.csv"), header = TRUE)
+ 
+german_credit <- german_credit[,-1] #to remove the first column which is not important
+
+n<-dim(german_credit)[1] 
+p<-dim(german_credit)[2]
+
+numericvar <- c("DURATION", "AMOUNT", "INSTALL_RATE", "AGE", "NUM_CREDITS", "NUM_DEPENDENTS")
+catevar <- c( "CHK_ACCT", "HISTORY", "JOB", "SAV_ACCT", "EMPLOYMENT", "PRESENT_RESIDENT")
+binaryvar <- c("NEW_CAR", "USED_CAR", "FURNITURE", "RADIO.TV", "EDUCATION", "RETRAINING", "MALE_DIV", "MALE_SINGLE", "MALE_MAR_or_WID", "CO.APPLICANT", "GUARANTOR", "REAL_ESTATE", "PROP_UNKN_NONE", "OTHER_INSTALL", "RENT", "OWN_RES", "TELEPHONE", "FOREIGN")
+```
+
+> **Missing values**
+
+To have a further knowledge of the structure of our data, we plot the following charts  to identify if there were missing observations on each of the variables. We note that we don't observe any missing values, so we will proceed looking at each variable more closer to identify possible outliers.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+
+plot_intro(german_credit[,-p])
+
+```
+
+```{r message=FALSE, include=FALSE}
+nrows<-nrow(german_credit)
+n.missing<-rowSums(is.na(german_credit))
+sum(n.missing > 0)/nrows
+#0 meaning that there is no missing data
+
+n.complete<-sum(complete.cases(german_credit))
+n.complete/nrows
+#1 meaning that all rows are complete and sum of it is equivalent to the number of row so when it's divided by the numbers of row. It returns 1
+```
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+plot_missing(german_credit[,-p])
+#showing that there is no missing value
+```
+
+> **Overall Summary**
+
+In this section, we will show the summary of each variable. 
+
+* **Key Findings from the summary table below**
+
+-   Response Variable: has 70% good applicants and 30% bad applicants.
+-   Duration: the average duration of credit in months is 20.9 months whereas the first and third quartiles are 12 and 24 months respectively.
+-   History: something important to mention on the credit history is that there is 29% of critical accounts.
+-   Variables considered as Purposes of credit:
+    -   New Car: 23% of users
+    -   Used Car: 10% of users
+    -   Furniture: 18% of users
+    -   Radio / TV: 28% of users
+    -   Education: 5% of users
+    -   Retraining: \~ 10% of users
+    -   There is a 6% of users that we don't know the purpose of the credit
+-   Gender and status of applicants:
+    -   5% are male and divorced
+    -   55% are male and single
+    -   9% are male and married/a widower
+    -   31% of the others such as women in any status
+
+```{r echo=FALSE, message=FALSE}
+eda_per_variable <- german_credit %>%
+  mutate(CHK_ACCT = case_when(
+    CHK_ACCT == 0 ~ "< 0DM",
+    CHK_ACCT == 1 ~ "0 < -- < 200DM",
+    CHK_ACCT == 2 ~ ">= 200DM",
+    CHK_ACCT == 3 ~ "No checking account")) %>%
+  mutate(HISTORY = case_when(
+    HISTORY == 0 ~ "No credit data",
+    HISTORY == 1 ~ "All credits at this bank paid back dully",
+    HISTORY == 2 ~ "Existing credits paid",
+    HISTORY == 3 ~ "No checking account",
+    HISTORY == 4 ~ "Critical account")) %>%
+  mutate(`NEW_CAR, Positive(Yes)` = case_when(
+    NEW_CAR == 0 ~ "No",
+    NEW_CAR == 1 ~ "Yes")) %>%
+  mutate(`USED_CAR, Positive(Yes)` = case_when(
+    USED_CAR == 0 ~ "No",
+    USED_CAR == 1 ~ "Yes")) %>%
+  mutate(`FURNITURE, Positive(Yes)` = case_when(
+    FURNITURE == 0 ~ "No",
+    FURNITURE == 1 ~ "Yes")) %>%
+  mutate(`RADIO.TV, Positive(Yes)` = case_when(
+    RADIO.TV == 0 ~ "No",
+    RADIO.TV == 1 ~ "Yes")) %>%
+  mutate(`EDUCATION, Positive(Yes)` = case_when(
+    EDUCATION == 0 ~ "No",
+    EDUCATION == 1 ~ "Yes",
+    EDUCATION == -1 ~ "Binary as -1 (OBS #37)")) %>%
+  mutate(`RETRAINING, Positive(Yes)` = case_when(
+    RETRAINING == 0 ~ "No",
+    RETRAINING == 1 ~ "Yes")) %>%
+  mutate(SAV_ACCT = case_when(
+    SAV_ACCT == 0 ~ "< 100DM",
+    SAV_ACCT == 1 ~ "100 <= -- < 500DM",
+    SAV_ACCT == 2 ~ "500 <= -- < 1000DM",
+    SAV_ACCT == 3 ~ ">= 1000DM",
+    SAV_ACCT == 4 ~ "Unknown/No savings account")) %>%
+  mutate(EMPLOYMENT = case_when(
+    EMPLOYMENT == 0 ~ "Unemployed",
+    EMPLOYMENT == 1 ~ "< 1 year",
+    EMPLOYMENT == 2 ~ "1 <= -- < 4 years",
+    EMPLOYMENT == 3 ~ "1 <= -- < 7 years",
+    EMPLOYMENT == 4 ~ ">= 7 years")) %>%
+  mutate(`MALE_DIV, Positive(Yes)` = case_when(
+    MALE_DIV == 0 ~ "No",
+    MALE_DIV == 1 ~ "Yes")) %>%
+  mutate(`MALE_SINGLE, Positive(Yes)` = case_when(
+    MALE_SINGLE == 0 ~ "No",
+    MALE_SINGLE == 1 ~ "Yes")) %>%
+  mutate(`MALE_MAR_or_WID, Positive(Yes)` = case_when(
+    MALE_MAR_or_WID == 0 ~ "No",
+    MALE_MAR_or_WID == 1 ~ "Yes")) %>%
+  mutate(`CO.APPLICANT, Positive(Yes)` = case_when(
+    CO.APPLICANT == 0 ~ "No",
+    CO.APPLICANT == 1 ~ "Yes")) %>%
+  mutate(`GUARANTOR, Positive(Yes)` = case_when(
+    GUARANTOR == 0 ~ "No",
+    GUARANTOR == 1 ~ "Yes",
+    GUARANTOR == 2 ~ "Binary as 2 (OBS #234)")) %>%
+  mutate(PRESENT_RESIDENT = case_when(
+    PRESENT_RESIDENT == 1 ~ "< 1 year",
+    PRESENT_RESIDENT == 2 ~ "1 <= -- < 2 years",
+    PRESENT_RESIDENT == 3 ~ "2 <= -- < 3 years",
+    PRESENT_RESIDENT == 4 ~ ">= 4 years")) %>%
+  mutate(`REAL_ESTATE, Positive(Yes)` = case_when(
+    REAL_ESTATE == 0 ~ "No",
+    REAL_ESTATE == 1 ~ "Yes")) %>%
+  mutate(`PROP_UNKN_NONE, Positive(Yes)` = case_when(
+    PROP_UNKN_NONE == 0 ~ "No",
+    PROP_UNKN_NONE == 1 ~ "Yes")) %>%
+  mutate(`OTHER_INSTALL, Positive(Yes)` = case_when(
+    OTHER_INSTALL == 0 ~ "No",
+    OTHER_INSTALL == 1 ~ "Yes"))%>%
+  mutate(`RENT, Positive(Yes)` = case_when(
+    RENT == 0 ~ "No",
+    RENT == 1 ~ "Yes")) %>%
+  mutate(`OWN_RES, Positive(Yes)` = case_when(
+    OWN_RES == 0 ~ "No",
+    OWN_RES == 1 ~ "Yes")) %>%
+  mutate(JOB = case_when(
+    JOB == 0 ~ "Unemployed/unskilled non-resident",
+    JOB == 1 ~ "Unskilled - resident",
+    JOB == 2 ~ "Skilled employee/official",
+    JOB == 3 ~ "Management/self-employed/highly qualified employee/officcer",
+    JOB == 4 ~ "Critical account")) %>%
+  mutate(`TELEPHONE, Positive(Yes)` = case_when(
+    TELEPHONE == 0 ~ "No",
+    TELEPHONE == 1 ~ "Yes")) %>%
+  mutate(`FOREIGN,, Positive(Yes)` = case_when(
+    FOREIGN == 0 ~ "No",
+    FOREIGN == 1 ~ "Yes"))
+
+eda_per_variable$Customers <- "Customers"
+eda_per_variable <- eda_per_variable %>%
+  select(c(-NEW_CAR,-USED_CAR,-FURNITURE,-RADIO.TV,-EDUCATION,-RETRAINING,-MALE_DIV,
+           -MALE_SINGLE,-MALE_MAR_or_WID,-CO.APPLICANT,-GUARANTOR,-REAL_ESTATE,
+           -PROP_UNKN_NONE,-OTHER_INSTALL,-RENT,-OWN_RES,-TELEPHONE,-FOREIGN)) %>%
+  relocate(RESPONSE, .after = last_col())
+
+tbl_summary(
+  eda_per_variable,
+  type = all_continuous() ~ "continuous2",
+  by = Customers, # split table by group
+  missing = "no", # don't list missing data separately
+  statistic = list(all_continuous() ~ c("{median}, ({p25}, {p75})",
+                                        "{mean}, ({min}, {max})"),
+                   all_categorical() ~ "{n}, ({p}%)")) %>%
+  add_n() %>% # add column with total number of non-missing observations
+  modify_header(label = "**Variables**") %>% # update the column header
+  modify_caption("**German Credit Data Summary**") %>%
+  bold_labels()
+```
+
+> **Histogram to visualize numerical and categorical variables**
+
+Histogram is to summarize the distribution of the data set. Thus, binary variables are not included in the chart. This is because binary variables have only 0 and 1 values, so their histograms are not very meaningful.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+plot_histogram(
+  german_credit[,c(catevar, numericvar)],
+  binary_as_factor = FALSE,
+  geom_histogram_args = list(bins = 30L),
+  scale_x = "continuous",
+  title = "Histogram for numerical and categorical variables",
+  ggtheme = theme_gray(),
+  theme_config = list(),
+  nrow = 4L,
+  ncol = 4L,
+  parallel = FALSE
+)
+```
+
+* **Key Findings from the histograms**
+
+-   AGE, AMOUNT and DURATION: positive skewness meaning that the bank may expect frequent young clients which borrow small loan with approximately 0-25 months credit duration.
+-   The most frequent category for CHK_ACCT is no checking account and only a few applicants have more than 200 DM. Majority of applicants have less than 200 DM in saving account.
+-   Most applicants are employed with the skilled employee category. The most highest frequency is in the 1-4 years category.
+-   The most common installment rate is 4% of disposable income and the most common number of existing credits at this bank is 1. Also, the larger parts of applicants are individuals for whom liable to provide maintenance. In general, applicants have been in the current residence for more than 1 year.
+-   Most of the applicants are paid the existing credits back duly however, the second most frequent group is the critical account.
+
+> **Box plot to interpret numerical data**
+
+We use box plot to visualize quartile, median, skewness and outliers of numerical data. Thus, in this section, we select only numerical variables including DURATION, AMOUNT, INSTALL_RATE, AGE, NUM_CREDITS and NUM_DEPENDENTS. However, we also include EMPLOYMENT and PRESENT_RESIDENT. Although both are categorical variables, the values represent the length of employment and residency, which also provide numerical information. <br />
+
+For each box plot below, the top box (response of 1) represents good applicants and the bottom one (response of 0) represents bad applications.
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+plot_boxplot(german_credit[,c(numericvar, 
+                              "RESPONSE","EMPLOYMENT", "PRESENT_RESIDENT")],
+             by= "RESPONSE", binary_as_factor = FALSE, ncol = 2, 
+             title = "Side-by-side boxplots")
+```
+
+Regarding the 'good' applicants from box plot, they tend to have one of the following characteristics: shorter credit duration, longer employment duration, lower credit amount. Regarding the AGE variable, the age profiles of good applicants tend to be slightly higher. Also, we spot a possible error which is 125 years old. As for the rest variables, INSTALL_RATE, NUM_CREDITS, NUM_DEPENDENTS and PRESENT_RESIDENT, there are no significant differences between good and bad applicants.
+
+
+
+> **Summary by RESPONSE**
+
+In this section, we show average of each variable split by the response variable. Since our data contains binary variables, we believe that average is more appropriate than median. Please note that the response of 0 represents 'Bad' applicants and the response of 1 represents 'Good' applicants.
+
+```{r echo=FALSE, message=FALSE}
+round(t(apply(german_credit[,c(numericvar, binaryvar)], 2, tapply, german_credit$RESPONSE, mean)), 2)
+```
+
+From the table above, we can observe that the average amount of 'Good' applicants is almost 3000, while the average amount of 'Bad' applicants is almost 4000. If we look at Purpose of Credit, we find that the top purpose of 'Good' applicants are ratio/TV (31% of the total number of 'Good' applicants). On the other hand, the top purpose of 'Bad' applicants is new car (30% of the total number of 'Bad' applicants).  
+
+
+> **Scatter plots and Correlations**
+
+In this section, we show scatter plots and linear correlations of all numerical variables as well as the response variable. <br />
+
+```{r echo=FALSE, message=FALSE, fig.align='center'}
+german_credit_temp <- german_credit
+german_credit_temp$RESPONSE <- as.factor(german_credit_temp$RESPONSE)
+
+ggpairs(german_credit_temp[,c(numericvar, "RESPONSE")], ggplot2::aes(colour=RESPONSE))
+```
+
+<br /> From the result, we see that AMOUNT and DURATION have a correlation of 0.63, and they seems to be negatively correlated with the response variable. This supports our observation from the box plot section that the 'good' applicants tend to have short credit duration and low credit amount.

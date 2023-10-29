@@ -1,0 +1,46 @@
+---
+title: "Deployment"
+author: "Manunpat"
+date: '2022-06-05'
+output: html_document
+---
+
+## **Deployment**
+
+Deployment is the process of using your new insights to make improvements within your organization. We will focus on planning for deployment and planning monitoring and maintenance.
+
+> **Planning for Deployment**
+
+In this step, we plan responsibilities for each key stakeholders, including application developers, database experts, and credit officers.
+
+Application developers need to create an interactive web interface using tools such as R Shiny and then deploy the final model into the web interface.
+
+Database experts need to maintain the application databases and need to ensure the quality of the data. Also, they need to be able to modify the databases in case new variables might be needed for the model improvement in the future.
+
+Credit officers need to learn how to use the web interface and how to use the output from the model in their decision making process. For example, at the beginning, credit officers might make a decision based on both model output (50%) and other qualitative information or any other factors that are not taken into account in the model (50%). Once the model is improved and able to provide better accuracy, the credit decision might be automated and rely 100% on the model output. It's also very important that they must be informed when there are any changes in the model.
+
+> **Planning Monitoring and Maintenance**
+
+It's also important to frequently monitor the model performance over time to ensure that the model performs as expected when it's rolled out.
+
+The frequency of monitoring should depend on the number of applicants over the time horizon. This is because we need a sufficient sample size to ensure that the observed accuracy is robust and meaningful. We suggest to monitor the model accuracy when there are at least 200 new applications, which is the same size as our test set.
+
+In addition, we need to feed new information into the model and re-train the model based on new data. This is because the data distribution and customer behavior can be expected to drift over time.
+
+## **References**
+
+[caret: Classification and Regression Training, accessed on 30 April 2022](https://cran.r-project.org/web/packages/caret/caret.pdf)
+
+[Chris Nicholson,"A Beginner’s Guide to Important Topics in AI, Machine Learning, and Deep Learning", 2020](https://wiki.pathmind.com/neural-network)
+
+[IBM, Introduction to CRISP-DM, accessed on 10 May 2022](https://www.ibm.com/docs/en/spss-modeler/SaaS?topic=guide-introduction-crisp-dm)
+
+[Ivo Bernardo, "Classification Decision Trees, Easily Explained", Aug 30, 2021](https://towardsdatascience.com/classification-decision-trees-easily-explained-f1064dde175e)
+
+[Saikumar Talari, "Random Forest® vs Decision Tree: Key Differences",February 18, 2022](https://www.kdnuggets.com/2022/02/random-forest-decision-tree-key-differences.html#:~:text=The%20critical%20difference%20between%20the,work%20according%20to%20the%20output.)
+
+
+
+
+
+ 
